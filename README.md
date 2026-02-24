@@ -19,7 +19,7 @@
 0. Clone dự án:
 
     ```bash
-    git clone [https://github.com/devin-ph/smart_note.git](https://github.com/devin-ph/smart_note.git)
+    git clone https://github.com/devin-ph/smart_note.git
     ```
 1. Cài dependencies:
 
