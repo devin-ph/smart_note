@@ -7,15 +7,16 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:smart_note/main.dart';
 
 void main() {
   testWidgets('App builds smoke test', (WidgetTester tester) async {
-    // Replace SmartNoteApp with the real app class from main.dart
+    SharedPreferences.setMockInitialValues({});
+
     await tester.pumpWidget(const SmartNoteApp());
 
-    // Basic render check
     expect(find.byType(MaterialApp), findsOneWidget);
   });
 }
