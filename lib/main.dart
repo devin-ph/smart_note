@@ -15,7 +15,7 @@ enum AppThemeMode { system, light, dark }
 
 enum NoteSort { updatedDesc, updatedAsc, titleAsc }
 
-enum NoteBucket { notes, archived, trash }
+enum NoteBucket { notes, trash }
 
 class SmartNoteApp extends StatefulWidget {
   const SmartNoteApp({super.key});
@@ -164,13 +164,42 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadData() async {
     final notes = await NoteStorage.loadNotes();
     final viewMode = await NoteStorage.loadViewMode();
+    var hasArchivedNotes = false;
+
+    final normalizedNotes = notes.map((note) {
+      if (!note.isArchived) {
+        return note;
+      }
+
+      hasArchivedNotes = true;
+      return Note(
+        id: note.id,
+        title: note.title,
+        content: note.content,
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+        isPinned: note.isPinned,
+        isArchived: false,
+        isDeleted: note.isDeleted,
+        colorIndex: note.colorIndex,
+        tags: List<String>.from(note.tags),
+        isChecklist: note.isChecklist,
+        checklistItems: List<ChecklistItem>.from(note.checklistItems),
+        attachments: List<NoteAttachment>.from(note.attachments),
+        deletedAt: note.deletedAt,
+      );
+    }).toList();
+
+    if (hasArchivedNotes) {
+      await NoteStorage.saveNotes(normalizedNotes);
+    }
 
     if (!mounted) {
       return;
     }
 
     setState(() {
-      _notes = notes;
+      _notes = normalizedNotes;
       _isGridMode = viewMode != 'list';
       _isLoading = false;
     });
@@ -202,7 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _togglePin(Note note) async {
-    if (note.isDeleted || note.isArchived) {
+    if (note.isDeleted) {
       return;
     }
     final index = _notes.indexWhere((element) => element.id == note.id);
@@ -215,35 +244,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _notes[index].updatedAt = DateTime.now();
     });
     await _saveAll();
-  }
-
-  Future<void> _toggleArchive(Note note) async {
-    if (note.isDeleted) {
-      return;
-    }
-    final index = _notes.indexWhere((element) => element.id == note.id);
-    if (index == -1) {
-      return;
-    }
-
-    final archived = !_notes[index].isArchived;
-    setState(() {
-      _notes[index].isArchived = archived;
-      _notes[index].isPinned = false;
-      _notes[index].updatedAt = DateTime.now();
-    });
-    await _saveAll();
-
-    if (!mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          archived ? 'Đã chuyển vào lưu trữ.' : 'Đã khôi phục khỏi lưu trữ.',
-        ),
-      ),
-    );
   }
 
   Future<void> _moveToTrash(Note note) async {
@@ -326,10 +326,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_bucket == NoteBucket.trash) {
         return note.isDeleted;
       }
-      if (_bucket == NoteBucket.archived) {
-        return !note.isDeleted && note.isArchived;
-      }
-      return !note.isDeleted && !note.isArchived;
+      return _bucket == NoteBucket.trash ? note.isDeleted : !note.isDeleted;
     });
 
     final tags = <String>{};
@@ -345,8 +342,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final filtered = _notes.where((note) {
       final inBucket = switch (_bucket) {
-        NoteBucket.notes => !note.isDeleted && !note.isArchived,
-        NoteBucket.archived => !note.isDeleted && note.isArchived,
+        NoteBucket.notes => !note.isDeleted,
         NoteBucket.trash => note.isDeleted,
       };
       if (!inBucket) {
@@ -666,11 +662,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         label: Text('Ghi chú'),
                       ),
                       ButtonSegment<NoteBucket>(
-                        value: NoteBucket.archived,
-                        icon: Icon(Icons.archive_rounded),
-                        label: Text('Lưu trữ'),
-                      ),
-                      ButtonSegment<NoteBucket>(
                         value: NoteBucket.trash,
                         icon: Icon(Icons.delete_outline_rounded),
                         label: Text('Thùng rác'),
@@ -759,7 +750,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                       onTap: () => _openEditor(note: note),
                                       onPinTap: () => _togglePin(note),
-                                      onArchiveTap: () => _toggleArchive(note),
                                       onRestoreTap: () =>
                                           _restoreFromTrash(note),
                                       onDeleteTap: () =>
@@ -788,7 +778,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                       onTap: () => _openEditor(note: note),
                                       onPinTap: () => _togglePin(note),
-                                      onArchiveTap: () => _toggleArchive(note),
                                       onRestoreTap: () =>
                                           _restoreFromTrash(note),
                                       onDeleteTap: () =>
@@ -818,7 +807,6 @@ class _NoteCard extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.onPinTap,
-    required this.onArchiveTap,
     required this.onRestoreTap,
     required this.onDeleteTap,
   });
@@ -828,14 +816,13 @@ class _NoteCard extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
   final VoidCallback onPinTap;
-  final VoidCallback onArchiveTap;
   final VoidCallback onRestoreTap;
   final VoidCallback onDeleteTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final doneCount = note.checklistItems.where((item) => item.isDone).length;
+    final previewText = _buildTextPreviewContent(note);
     final previewBytes = _decodeAttachmentPreview(note);
 
     return Card(
@@ -867,8 +854,6 @@ class _NoteCard extends StatelessWidget {
                     onSelected: (value) {
                       if (value == 'pin') {
                         onPinTap();
-                      } else if (value == 'archive') {
-                        onArchiveTap();
                       } else if (value == 'restore') {
                         onRestoreTap();
                       } else if (value == 'delete') {
@@ -896,12 +881,6 @@ class _NoteCard extends StatelessWidget {
                             note.isPinned ? 'Bỏ ghim' : 'Ghim ghi chú',
                           ),
                         ),
-                        PopupMenuItem<String>(
-                          value: 'archive',
-                          child: Text(
-                            note.isArchived ? 'Bỏ lưu trữ' : 'Lưu trữ',
-                          ),
-                        ),
                         const PopupMenuItem<String>(
                           value: 'delete',
                           child: Text('Chuyển thùng rác'),
@@ -913,48 +892,11 @@ class _NoteCard extends StatelessWidget {
               ),
               if (note.isChecklist && note.checklistItems.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text(
-                  '$doneCount/${note.checklistItems.length} việc đã hoàn thành',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: theme.colorScheme.primary,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ...note.checklistItems
-                    .take(3)
-                    .map(
-                      (item) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Icon(
-                              item.isDone
-                                  ? Icons.check_circle_rounded
-                                  : Icons.radio_button_unchecked_rounded,
-                              size: 14,
-                              color: item.isDone
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                item.text,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-              ] else if (note.content.trim().isNotEmpty) ...[
+                ..._buildChecklistPreviewRows(note, theme),
+              ] else if (previewText.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text(
-                  note.content,
-                  maxLines: 6,
-                  overflow: TextOverflow.ellipsis,
+                _ThreeLinePreviewText(
+                  text: previewText,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                     height: 1.35,
@@ -1047,7 +989,6 @@ class _NoteListTile extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.onPinTap,
-    required this.onArchiveTap,
     required this.onRestoreTap,
     required this.onDeleteTap,
   });
@@ -1057,18 +998,14 @@ class _NoteListTile extends StatelessWidget {
   final Color color;
   final VoidCallback onTap;
   final VoidCallback onPinTap;
-  final VoidCallback onArchiveTap;
   final VoidCallback onRestoreTap;
   final VoidCallback onDeleteTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final doneCount = note.checklistItems.where((item) => item.isDone).length;
     final previewBytes = _decodeAttachmentPreview(note);
-    final subtitleText = note.isChecklist
-        ? '$doneCount/${note.checklistItems.length} việc đã hoàn thành'
-        : (note.content.trim().isEmpty ? 'Không có nội dung' : note.content);
+    final subtitleText = _buildTextPreviewContent(note);
 
     return Card(
       color: color,
@@ -1108,11 +1045,13 @@ class _NoteListTile extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      subtitleText,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    if (note.isChecklist && note.checklistItems.isNotEmpty)
+                      ..._buildChecklistPreviewRows(note, theme)
+                    else
+                      _ThreeLinePreviewText(
+                        text: subtitleText,
+                        style: theme.textTheme.bodyMedium,
+                      ),
                     if (note.attachments.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(
@@ -1136,8 +1075,6 @@ class _NoteListTile extends StatelessWidget {
                     onSelected: (value) {
                       if (value == 'pin') {
                         onPinTap();
-                      } else if (value == 'archive') {
-                        onArchiveTap();
                       } else if (value == 'restore') {
                         onRestoreTap();
                       } else if (value == 'delete') {
@@ -1165,12 +1102,6 @@ class _NoteListTile extends StatelessWidget {
                             note.isPinned ? 'Bỏ ghim' : 'Ghim ghi chú',
                           ),
                         ),
-                        PopupMenuItem<String>(
-                          value: 'archive',
-                          child: Text(
-                            note.isArchived ? 'Bỏ lưu trữ' : 'Lưu trữ',
-                          ),
-                        ),
                         const PopupMenuItem<String>(
                           value: 'delete',
                           child: Text('Chuyển thùng rác'),
@@ -1188,6 +1119,72 @@ class _NoteListTile extends StatelessWidget {
   }
 }
 
+class _ThreeLinePreviewText extends StatelessWidget {
+  const _ThreeLinePreviewText({required this.text, this.style});
+
+  final String text;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = text.trimRight();
+    if (value.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final direction = Directionality.of(context);
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+
+        final fullPainter = TextPainter(
+          text: TextSpan(text: value, style: style),
+          textDirection: direction,
+          maxLines: 3,
+        )..layout(maxWidth: maxWidth);
+
+        if (!fullPainter.didExceedMaxLines) {
+          return Text(
+            value,
+            maxLines: 3,
+            overflow: TextOverflow.clip,
+            style: style,
+          );
+        }
+
+        var low = 0;
+        var high = value.length;
+        var best = '...';
+
+        while (low <= high) {
+          final mid = (low + high) ~/ 2;
+          final candidate = '${value.substring(0, mid).trimRight()}...';
+          final painter = TextPainter(
+            text: TextSpan(text: candidate, style: style),
+            textDirection: direction,
+            maxLines: 3,
+          )..layout(maxWidth: maxWidth);
+
+          if (painter.didExceedMaxLines) {
+            high = mid - 1;
+          } else {
+            best = candidate;
+            low = mid + 1;
+          }
+        }
+
+        return Text(
+          best,
+          maxLines: 3,
+          overflow: TextOverflow.clip,
+          style: style,
+        );
+      },
+    );
+  }
+}
+
 Uint8List? _decodeAttachmentPreview(Note note) {
   if (note.attachments.isEmpty) {
     return null;
@@ -1199,6 +1196,54 @@ Uint8List? _decodeAttachmentPreview(Note note) {
   } catch (_) {
     return null;
   }
+}
+
+String _buildTextPreviewContent(Note note) {
+  final content = note.content.trim();
+  if (content.isNotEmpty) {
+    return content;
+  }
+
+  return 'Không có nội dung';
+}
+
+List<Widget> _buildChecklistPreviewRows(Note note, ThemeData theme) {
+  final items = note.checklistItems.take(3).toList();
+  final hasMore = note.checklistItems.length > 3;
+
+  return List.generate(items.length, (index) {
+    final item = items[index];
+    final isLastVisible = index == items.length - 1;
+    final text = isLastVisible && hasMore ? '${item.text}...' : item.text;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: index == items.length - 1 ? 0 : 4),
+      child: Row(
+        children: [
+          Icon(
+            item.isDone
+                ? Icons.check_box_rounded
+                : Icons.check_box_outline_blank_rounded,
+            size: 14,
+            color: item.isDone
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  });
 }
 
 class _EmptyState extends StatelessWidget {
@@ -1222,9 +1267,6 @@ class _EmptyState extends StatelessWidget {
         case NoteBucket.notes:
           title = 'Tạo ghi chú đầu tiên của bạn';
           icon = Icons.edit_note_rounded;
-        case NoteBucket.archived:
-          title = 'Chưa có ghi chú lưu trữ';
-          icon = Icons.archive_outlined;
         case NoteBucket.trash:
           title = 'Thùng rác đang trống';
           icon = Icons.delete_outline_rounded;

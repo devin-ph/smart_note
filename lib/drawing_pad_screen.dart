@@ -194,6 +194,7 @@ class _DrawingPadScreenState extends State<DrawingPadScreen> {
                           color: color,
                           shape: BoxShape.circle,
                           border: Border.all(
+                          
                             color: _selectedColor == color
                                 ? Theme.of(context).colorScheme.primary
                                 : Colors.transparent,
@@ -227,12 +228,15 @@ class _DrawingPadScreenState extends State<DrawingPadScreen> {
                   onPanUpdate: (details) =>
                       _appendStroke(details.localPosition),
                   onPanEnd: (_) => _endStroke(),
-                  child: CustomPaint(
-                    painter: _DrawingPainter(
-                      strokes: _strokes,
-                      activeStroke: _activeStroke,
+                  child: Container(
+                    color: Colors.white,
+                    child: CustomPaint(
+                      foregroundPainter: _DrawingPainter(
+                        strokes: _strokes,
+                        activeStroke: _activeStroke,
+                      ),
+                      child: const SizedBox.expand(),
                     ),
-                    child: Container(color: Colors.white),
                   ),
                 ),
               ),
@@ -287,7 +291,6 @@ class _DrawingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DrawingPainter oldDelegate) {
-    return oldDelegate.strokes != strokes ||
-        oldDelegate.activeStroke != activeStroke;
+    return true;
   }
 }

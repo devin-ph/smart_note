@@ -32,6 +32,8 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
   bool _isSaving = false;
   bool _hasPendingChanges = false;
   final ImagePicker _imagePicker = ImagePicker();
+  static const Duration _idleSaveDelay = Duration(milliseconds: 1400);
+  static const Duration _metaSaveDelay = Duration(milliseconds: 700);
 
   static const List<int> _paletteIndexes = [0, 1, 2, 3, 4];
 
@@ -72,14 +74,19 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
   }
 
   void _onFieldChanged() {
+    final shouldUpdateStatus = !_hasPendingChanges;
     _hasPendingChanges = true;
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), () {
-      _saveNote();
-    });
-    if (mounted) {
+    _queueSave(delay: _idleSaveDelay);
+    if (mounted && shouldUpdateStatus) {
       setState(() {});
     }
+  }
+
+  void _queueSave({Duration delay = _idleSaveDelay}) {
+    _debounce?.cancel();
+    _debounce = Timer(delay, () {
+      _saveNote();
+    });
   }
 
   Future<void> _saveNote() async {
@@ -94,6 +101,11 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     );
 
     if (title.isEmpty && content.isEmpty && !hasChecklistContent) {
+      if (mounted && _hasPendingChanges) {
+        setState(() {
+          _hasPendingChanges = false;
+        });
+      }
       return;
     }
 
@@ -109,7 +121,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       createdAt: _workingNote.createdAt,
       updatedAt: now,
       isPinned: _workingNote.isPinned,
-      isArchived: _workingNote.isArchived,
+      isArchived: false,
       isDeleted: _workingNote.isDeleted,
       colorIndex: _workingNote.colorIndex,
       tags: List<String>.from(_workingNote.tags),
@@ -148,15 +160,14 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     Navigator.pop(context, true);
   }
 
-  Future<void> _updateMeta({
+  void _updateMeta({
     bool? pin,
-    bool? archive,
     int? colorIndex,
     bool? checklistMode,
     List<String>? tags,
     List<ChecklistItem>? checklistItems,
     List<NoteAttachment>? attachments,
-  }) async {
+  }) {
     _workingNote = Note(
       id: _workingNote.id,
       title: _titleController.text.trim(),
@@ -164,7 +175,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       createdAt: _workingNote.createdAt,
       updatedAt: DateTime.now(),
       isPinned: pin ?? _workingNote.isPinned,
-      isArchived: archive ?? _workingNote.isArchived,
+      isArchived: false,
       isDeleted: _workingNote.isDeleted,
       colorIndex: colorIndex ?? _workingNote.colorIndex,
       tags: tags ?? _workingNote.tags,
@@ -176,7 +187,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
     setState(() {
       _hasPendingChanges = true;
     });
-    await _saveNote();
+    _queueSave(delay: _metaSaveDelay);
   }
 
   void _addTag() {
@@ -260,7 +271,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       ),
     ];
 
-    await _updateMeta(attachments: nextAttachments);
+    _updateMeta(attachments: nextAttachments);
   }
 
   Future<void> _addDrawing() async {
@@ -282,7 +293,7 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
       ),
     ];
 
-    await _updateMeta(attachments: nextAttachments);
+    _updateMeta(attachments: nextAttachments);
   }
 
   void _removeAttachment(NoteAttachment target) {
@@ -347,15 +358,6 @@ class _NoteEditScreenState extends State<NoteEditScreen> {
                 _workingNote.isPinned
                     ? Icons.push_pin_rounded
                     : Icons.push_pin_outlined,
-              ),
-            ),
-            IconButton(
-              tooltip: _workingNote.isArchived ? 'Bỏ lưu trữ' : 'Lưu trữ',
-              onPressed: () => _updateMeta(archive: !_workingNote.isArchived),
-              icon: Icon(
-                _workingNote.isArchived
-                    ? Icons.archive_rounded
-                    : Icons.archive_outlined,
               ),
             ),
             IconButton(
