@@ -1,14 +1,75 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:async';
 
 import 'note.dart';
 import 'note_edit_screen.dart';
 import 'note_storage.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _initializeFirebase();
   runApp(const SmartNoteApp());
+}
+
+Future<void> _initializeFirebase() async {
+  try {
+    if (kIsWeb) {
+      final webOptions = _firebaseOptionsFromEnvironment();
+      if (webOptions == null) {
+        debugPrint(
+          'Firebase Web chưa có cấu hình. App sẽ chạy local-only. '
+          'Bạn có thể chạy flutterfire configure hoặc truyền --dart-define.',
+        );
+        return;
+      }
+      await Firebase.initializeApp(options: webOptions);
+    } else {
+      await Firebase.initializeApp();
+    }
+
+    if (FirebaseAuth.instance.currentUser == null) {
+      await FirebaseAuth.instance.signInAnonymously();
+    }
+  } catch (error) {
+    debugPrint('Firebase khởi tạo thất bại, fallback local-only: $error');
+    debugPrint(
+      'Chạy `flutterfire configure` để liên kết Firebase project cho app.',
+    );
+  }
+}
+
+FirebaseOptions? _firebaseOptionsFromEnvironment() {
+  const apiKey = String.fromEnvironment('FIREBASE_WEB_API_KEY');
+  const appId = String.fromEnvironment('FIREBASE_WEB_APP_ID');
+  const messagingSenderId = String.fromEnvironment(
+    'FIREBASE_WEB_MESSAGING_SENDER_ID',
+  );
+  const projectId = String.fromEnvironment('FIREBASE_WEB_PROJECT_ID');
+  const authDomain = String.fromEnvironment('FIREBASE_WEB_AUTH_DOMAIN');
+  const storageBucket = String.fromEnvironment('FIREBASE_WEB_STORAGE_BUCKET');
+  const measurementId = String.fromEnvironment('FIREBASE_WEB_MEASUREMENT_ID');
+
+  if (apiKey.isEmpty ||
+      appId.isEmpty ||
+      messagingSenderId.isEmpty ||
+      projectId.isEmpty) {
+    return null;
+  }
+
+  return FirebaseOptions(
+    apiKey: apiKey,
+    appId: appId,
+    messagingSenderId: messagingSenderId,
+    projectId: projectId,
+    authDomain: authDomain.isEmpty ? null : authDomain,
+    storageBucket: storageBucket.isEmpty ? null : storageBucket,
+    measurementId: measurementId.isEmpty ? null : measurementId,
+  );
 }
 
 enum AppThemeMode { system, light, dark }
@@ -141,6 +202,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
+  StreamSubscription<List<Note>>? _notesSubscription;
 
   List<Note> _notes = [];
   bool _isLoading = true;
@@ -153,12 +215,42 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
+    _bindCloudSync();
   }
 
   @override
   void dispose() {
+    _notesSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _bindCloudSync() {
+    _notesSubscription?.cancel();
+    _notesSubscription = NoteStorage.watchNotes().listen((cloudNotes) async {
+      if (!mounted || cloudNotes.isEmpty) {
+        return;
+      }
+
+      final localById = {for (final note in _notes) note.id: note};
+      for (final cloudNote in cloudNotes) {
+        final local = localById[cloudNote.id];
+        if (local == null || cloudNote.updatedAt.isAfter(local.updatedAt)) {
+          localById[cloudNote.id] = cloudNote;
+        }
+      }
+
+      final merged = localById.values.toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _notes = merged;
+      });
+    });
   }
 
   Future<void> _loadData() async {
