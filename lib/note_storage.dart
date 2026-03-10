@@ -198,7 +198,6 @@ class NoteStorage {
 
       await batch.commit();
     } catch (_) {
-      // Keep local persistence as fallback when cloud sync fails.
     }
   }
 
